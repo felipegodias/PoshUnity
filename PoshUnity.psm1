@@ -17,11 +17,32 @@ function Open-UnityProject {
     $Unity.OpenProject($UnityProject.ProjectPath)
 }
 
+function Invoke-UnityInBatchMode {
+    param(
+        [String]$Project,
+        [String]$Method,
+        [String[]]$Arguments
+    )
+
+    $LogFile = "$($Project)/Builds/PoshUnity/RunInBatchMode.log"
+
+    $UnityProject = [UnityProject]::new($Project)
+    $UnityHub = [UnityHub]::new($UnityHubExecutablePath)
+
+    $UnityVersion = $UnityProject.GetUnityVersion()
+    $Unity = $UnityHub.GetUnityByVersion($UnityVersion)
+    
+    $Unity.RunInBatchMode($UnityProject.ProjectPath, $Method, $Arguments, $LogFile)
+}
+
 Set-Alias -Name opup -Value Open-UnityProject -Scope Global
 Export-ModuleMember -Function Open-UnityProject -Alias opup
 
+Set-Alias -Name iubm -Value Invoke-UnityInBatchMode -Scope Global
+Export-ModuleMember -Function Invoke-UnityInBatchMode -Alias iubm
+
 class Unity {
-    [String]$ExecutablePath
+    [String]$ExecutablePath 
 
     Unity([String]$ExecutablePath) {
         $this.ExecutablePath = $ExecutablePath
@@ -29,6 +50,42 @@ class Unity {
 
     OpenProject([string]$ProjectPath) {
         Start-Process -FilePath $this.ExecutablePath -ArgumentList "-projectPath", $ProjectPath
+    }
+
+    RunInBatchMode([string]$ProjectPath, [string]$Method, [String[]]$Arguments, [string]$LogFile) {
+        Clear-Content -Path $LogFile
+
+        $ProcessInfo = [ProcessStartInfo]::new()
+        $ProcessInfo.FileName = $this.ExecutablePath
+        $ProcessInfo.UseShellExecute = $false
+
+        $ProcessArguments = [List[String]]::new()
+        $ProcessArguments.Add("-batchmode")
+        $ProcessArguments.Add("-quit")
+        $ProcessArguments.Add("-logFile")
+        $ProcessArguments.Add($LogFile)
+        $ProcessArguments.Add("-projectPath")
+        $ProcessArguments.Add($ProjectPath)
+        $ProcessArguments.Add("-executeMethod")
+        $ProcessArguments.Add($Method)
+        $ProcessArguments.AddRange($Arguments)
+
+        $ProcessInfo.Arguments = $ProcessArguments.ToArray()
+
+        $Process = [Process]::new()
+        $Process.StartInfo = $ProcessInfo
+        $Process.Start()
+
+        $InvokeLogTailJob = Start-Job -ScriptBlock { Get-Content $Using:LogFile -Wait } -ArgumentList $LogFile
+
+        while ($Process.HasExited -eq $false) {
+            Receive-Job $InvokeLogTailJob | Out-Host
+        }
+        Start-Sleep -Seconds 1
+        Receive-Job $InvokeLogTailJob | Out-Host
+        Stop-Job $InvokeLogTailJob
+
+        Remove-Job $InvokeLogTailJob
     }
 }
 
